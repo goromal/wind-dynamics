@@ -1,12 +1,12 @@
 #pragma once
 
-#include "utils/modeling.h"
 #include <random>
 #include <chrono>
+#include <cmath>
+#include <algorithm>
+#include <Eigen/Core>
 
-//#include <iostream>
-
-using namespace modeling;
+using namespace Eigen;
 
 namespace dryden_model {
 
@@ -14,99 +14,92 @@ class GustModelBase
 {
 private:
     std::default_random_engine random_generator_;
-    std::normal_distribution<double> gust_dist_;
-    LTIModelSISO model_;
+    std::uniform_real_distribution<double> gust_dist_;
+    
     bool initialized_;
+    double dt_;
 
-protected:
-    MatrixXd alpha_;
-    MatrixXd beta_;
+    double alpha_;
+    double beta_;
+    double delta_;
+    double gamma_;
 
-    double V_;
-    double sigma_;
-    double L_;
+    double u_km1;
+    double u_km2;
+    double y_km1;
+    double y_km2;
 
-    virtual void constructAlphaAndBeta() = 0;
-//    {
-//        alpha_.resize(2, 1);
-//        beta_.resize(1, 1);
-//        alpha_ << 0., 0.;
-//        beta_ << 0.;
-//    }
-
-public:
-    GustModelBase()
-    {
-        random_generator_ = std::default_random_engine(std::chrono::system_clock::now().time_since_epoch().count());
-        gust_dist_ = std::normal_distribution<double>(0.0, 1.0);
-        initialized_ = false;
-    }
-//    GustModelBase(const double &Va0, const double &sigma, const double &L) : GustModelBase()
-//    {
-//        initializeParameters(Va0, sigma, L);
-//    }
-    void initializeParameters(const double &V0, const double &sigma, const double &L)
-    {
-        V_ = V0;
-        sigma_ = sigma;
-        L_ = L;
-        constructAlphaAndBeta();
-        MatrixXd x0(1, 1);
-        x0 << 0.0;
-        model_.setCoefficients(x0, alpha_, beta_);
-        initialized_ = true;
-    }
-//    void setNewWindSpeed(const double &V)
-//    {
-//        if (initialized_)
-//        {
-//            V_ = V;
-//            constructAlphaAndBeta();
-//            model_.reLinearizeDenNum(alpha_, beta_);
-//        }
-//    }
     double run(const double &dt)
     {
         if (initialized_)
         {
-            double u = gust_dist_(random_generator_);
-//            std::cout << u << std::endl;
-            return model_.run(u, dt);
+            double C1 = 1.0 + 2 * delta_ / dt + 4 * gamma_ / dt / dt;
+            double C2 = 2.0 - 8 * gamma_ / dt / dt;
+            double C3 = 1.0 - 2 * delta_ / dt + 4 * gamma_ / dt / dt;
+            double C4 = alpha_ + 2 * beta_ / dt;
+            double C5 = 2 * alpha_;
+            double C6 = alpha_ - 2 * beta_ / dt;
+
+            double u_k = gust_dist_(random_generator_);
+            double y_k = (C4 * u_k + C5 * u_km1 + C6 * u_km2 - C2 * y_km1 - C3 * y_km2) / C1;
+
+            u_km2 = u_km1;
+            u_km1 = u_k;
+            y_km2 = y_km1;
+            y_km1 = y_k;
+
+            return y_k;
         }
         else
             return 0.0;
     }
-};
 
-// OBSERVATION: output will be weakly bounded by sigma (because multiplied by 10)
-class DrydenNoZeroModel : public GustModelBase
-{
 public:
-    DrydenNoZeroModel() : GustModelBase() {}
-//    DrydenXModel(const double &Va0, const double &sigma, const double &L) : GustModelBase(Va0, sigma, L) {}
-protected:
-    void constructAlphaAndBeta() override
+    GustModelBase() : dt_(0.05)
     {
-        alpha_.resize(2, 1);
-        beta_.resize(1, 1);
-        alpha_ << V_ / L_, 1.;
-        beta_ << sigma_ * 10.0 * sqrt(2.0 * V_ / L_);
+        random_generator_ = std::default_random_engine(std::chrono::system_clock::now().time_since_epoch().count());
+        gust_dist_ = std::uniform_real_distribution<double>(-1.0, 1.0);
+        initialized_ = false;
     }
-};
 
-class DrydenZeroModel : public GustModelBase
-{
-public:
-    DrydenZeroModel() : GustModelBase() {}
-protected:
-    void constructAlphaAndBeta() override
+    void initializeParameters(const double &V, 
+                              const double &L, 
+                              const double &sigma)
     {
-        alpha_.resize(2, 1);
-        beta_.resize(2, 1);
-//        alpha_ << -V_ / L_, -V_ / L_;
-        alpha_ << V_ / L_, 1.;
-        beta_ << V_ / L_ / sqrt(3.0), 1.;
-        beta_ *= sigma_ * sqrt(3.0 * V_ / L_);
+        double b = 2 * sqrt(3) * L / V;
+        double c = 2 * L / V;
+
+        alpha_ = sigma * sqrt(2 * L / M_PI / V);
+        beta_ = alpha_ * b;
+        delta_ = 2 * c;
+        gamma_ = c * c;
+        
+        u_km1 = 0;
+        u_km2 = 0;
+        y_km1 = 0;
+        y_km2 = 0;
+
+        initialized_ = true;
+    }
+
+    double integrate(const double &dt)
+    {
+        if (dt > dt_)
+        {
+            double t = 0;
+            double y = 0;
+            while (t < dt)
+            {
+                double t_inc = std::min(dt_, dt - t);
+                y = run(t_inc);
+                t += t_inc;
+            }
+            return y;
+        }
+        else
+        {
+            return run(dt);
+        }
     }
 };
 
@@ -114,31 +107,44 @@ class DrydenWind
 {
 public:
     DrydenWind() : initialized_(false) {}
+
     void initialize(const double &wx_nominal, const double &wy_nominal, const double &wz_nominal,
-                    const double &wx_gust_bound, const double &wy_gust_bound, const double &wz_gust_bound)
+                    const double &wx_sigma,   const double &wy_sigma,   const double &wz_sigma,
+                    const double &altitude=2.0)
     {
         wx_nominal_ = wx_nominal;
         wy_nominal_ = wy_nominal;
         wz_nominal_ = wz_nominal;
-        wx_gust_.initializeParameters(1.0, wx_gust_bound, 100.0);
-        wy_gust_.initializeParameters(1.0, wy_gust_bound, 100.0);
-        wz_gust_.initializeParameters(1.0, wz_gust_bound, 100.0);
+
+        double Lz_ft = 3.281 * altitude;
+        double Lx_ft = Lz_ft / pow(0.177 + 0.000823 * Lz_ft, 1.2);
+        double Ly_ft = Lx_ft;
+
+        wx_gust_.initializeParameters(1.0, Lx_ft / 3.281, wx_sigma);
+        wy_gust_.initializeParameters(1.0, Ly_ft / 3.281, wy_sigma);
+        wz_gust_.initializeParameters(1.0, Lz_ft / 3.281, wz_sigma);
+
         initialized_ = true;
     }
+
     Vector3d getWind(const double &dt)
     {
         if (initialized_)
-            return Vector3d(wx_nominal_, wy_nominal_, wz_nominal_) + Vector3d(wx_gust_.run(dt), wy_gust_.run(dt), wz_gust_.run(dt));
+            return Vector3d(wx_nominal_, wy_nominal_, wz_nominal_) 
+                 + Vector3d(wx_gust_.integrate(dt), wy_gust_.integrate(dt), wz_gust_.integrate(dt));
         else
             return Vector3d(0., 0., 0.);
     }
+
 private:
-    DrydenNoZeroModel wx_gust_;
-    DrydenNoZeroModel wy_gust_;
-    DrydenNoZeroModel wz_gust_;
+    GustModelBase wx_gust_;
+    GustModelBase wy_gust_;
+    GustModelBase wz_gust_;
+
     double wx_nominal_;
     double wy_nominal_;
     double wz_nominal_;
+
     bool initialized_;
 };
 

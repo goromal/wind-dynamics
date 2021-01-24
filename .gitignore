@@ -1,0 +1,7 @@
+**/*.pyc
+**/*.so
+python/CMakeCache.txt
+python/CMakeFiles/*
+python/cmake_install.cmake
+python/lib/*
+python/Makefile
