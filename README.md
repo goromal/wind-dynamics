@@ -4,7 +4,7 @@ Algorithms for simulating 3D wind in C++ and Python.
 
 ## Model and Parameters Explanation
 
-The DrydenWind class will generate wind velocities that deviate from a user-specified nominal value according to the [Dryden Gust Model](https://en.wikipedia.org/wiki/Dryden_Wind_Turbulence_Model), which attempts to model gusts as a stochastic process. The functions in this library provide a C++/Python implementation of the Dryden Model [in its Pseudospecral form](https://en.wikipedia.org/wiki/Dryden_Wind_Turbulence_Model#cite_note-MATLAB_Dryden-4), which means that the stochastic process is modeled by driving a transfer function with white noise. In its continuous form, the transfer function in each dimension looks like:
+The DrydenWind class will generate wind velocities that deviate from a user-specified nominal value according to the [Dryden Gust Model](https://en.wikipedia.org/wiki/Dryden_Wind_Turbulence_Model), which attempts to model gusts as a stochastic process. The functions in this library provide a C++/Python implementation of the Dryden Model [in its Pseudospecral form](https://en.wikipedia.org/wiki/Dryden_Wind_Turbulence_Model#Spectral_Factorization), which means that the stochastic process is modeled by driving a transfer function with white noise. In its continuous form, the transfer function in each dimension looks like:
 
 ![transfer function](doc/gust_model_tf.png)
 
